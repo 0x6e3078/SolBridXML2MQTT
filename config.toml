@@ -1,6 +1,15 @@
 inverter_url = "http://<inverter.ip>/measurements.xml"
-mqtt_broker = "<mqtt.brocker.ip>"
-mqtt_port = 1883
-mqtt_client_id = "inverter_client"
 poll_interval_secs = 1
 max_errors = 40
+quiet_mode = true
+
+[mqtt]
+broker = "<mqtt.brocker.ip>"
+port = 1883
+client_id = "inverter_client"
+
+[influxdb]
+url = "http://localhost:8086"
+token = "your-token-here"
+org = "your-org"
+bucket = "solar_data"

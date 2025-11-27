@@ -1,42 +1,48 @@
 // SolBridXML2MQTT - A Rust application for Kontron Solbrid inverter data to MQTT.
-// Copyright (C) <YEAR>  <YOUR NAME>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use futures::stream;
+use influxdb2::{models::DataPoint, Client as InfluxClient};
 use reqwest::Client;
-use serde_xml_rs::from_str;
-use std::time::Duration;
+use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde::Deserialize;
-use tokio::time::sleep;
-use rumqttc::{MqttOptions, AsyncClient, QoS};
+use serde_xml_rs::from_str;
 use std::fs;
-use std::env;
+use std::time::Duration;
+use tokio::time::sleep;
 
-// Define a constant for the HTTP connection timeout
 const HTTP_TIMEOUT_SECS: u64 = 5;
+
+// --- New Nested Configuration Structs ---
 
 #[derive(Debug, Deserialize)]
 struct Config {
     inverter_url: String,
-    mqtt_broker: String,
-    mqtt_port: u16,
-    mqtt_client_id: String,
     poll_interval_secs: u64,
     max_errors: u32,
-    // New field for quiet mode configuration
     quiet_mode: Option<bool>,
+
+    // These sections are Optional.
+    // If [mqtt] is missing in TOML, this field will be None.
+    mqtt: Option<MqttConfig>,
+    influxdb: Option<InfluxDbConfig>,
 }
+
+#[derive(Debug, Deserialize)]
+struct MqttConfig {
+    broker: String,
+    port: u16,
+    client_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InfluxDbConfig {
+    url: String,
+    token: String,
+    org: String,
+    bucket: String,
+}
+
+// --- XML Parsing Structs (Unchanged) ---
 
 #[derive(Debug, Deserialize)]
 struct Root {
@@ -48,14 +54,8 @@ struct Root {
 struct Device {
     #[serde(rename = "@Name")]
     name: String,
-    #[serde(rename = "@Type")]
-    _device_type: String,
     #[serde(rename = "@Serial")]
     serial: String,
-    #[serde(rename = "@IpAddress")]
-    _ip_address: String,
-    #[serde(rename = "@DateTime")]
-    _date_time: String,
     #[serde(rename = "Measurements")]
     measurements: Measurements,
 }
@@ -76,12 +76,16 @@ struct Measurement {
     unit: Option<String>,
 }
 
+fn parse_value(value: &str) -> Option<f64> {
+    value.parse::<f64>().ok()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Try multiple config locations
+    // --- Configuration Loading ---
     let config_paths = [
-        "config.toml",                          // Current directory (for development)
-        "/etc/solbridxml2mqtt/config.toml",     // System-wide (for service)
+        "config.toml",
+        "/etc/solbridxml2mqtt/config.toml",
     ];
 
     let mut config_str = None;
@@ -96,86 +100,146 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let config_str = config_str
-        .ok_or("Could not find config.toml in any of these locations: config.toml, /etc/solbridxml2mqtt/config.toml")?;
+        .ok_or("Could not find config.toml in any of these locations.")?;
 
     let config: Config = toml::from_str(&config_str)
         .map_err(|e| format!("Failed to parse config.toml: {}", e))?;
 
-    // Determine if quiet mode is enabled
     let quiet_mode = config.quiet_mode.unwrap_or(false);
 
-    if !quiet_mode {
-        println!("Using configuration from: {}", used_path);
-        // Print current working directory for debugging
-        let current_dir = env::current_dir()?;
-        println!("Current working directory: {:?}", current_dir);
+    // --- Client Initialization ---
 
-        println!("Configuration loaded:");
-        println!("  Inverter URL: {}", config.inverter_url);
-        println!("  MQTT Broker: {}:{}", config.mqtt_broker, config.mqtt_port);
-        println!("  Poll Interval: {}s", config.poll_interval_secs);
-        println!("  Max Errors: {}", config.max_errors);
-        println!("  HTTP Timeout: {}s", HTTP_TIMEOUT_SECS);
-    }
-
-    // Setup reqwest Client with a 5s connect and read timeout
-    let client = Client::builder()
+    let http_client = Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
         .build()?;
 
-    // Setup MQTT connection with config values
-    let mut mqttoptions = MqttOptions::new(
-        &config.mqtt_client_id,
-        &config.mqtt_broker,
-        config.mqtt_port
-    );
-    mqttoptions.set_keep_alive(Duration::from_secs(5));
-
-    let (mqtt_client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
-
-    // Spawn a task to handle MQTT eventloop
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = eventloop.poll().await {
-                eprintln!("MQTT Error: {:?}", e);
-                sleep(Duration::from_secs(1)).await;
-            }
+    // MQTT Client Setup
+    // Now we just check if the `config.mqtt` struct exists
+    let mqtt_client_option = if let Some(mqtt_conf) = &config.mqtt {
+        if !quiet_mode {
+            println!("MQTT Configuration found: {}:{}", mqtt_conf.broker, mqtt_conf.port);
         }
-    });
+        let mut mqttoptions = MqttOptions::new(&mqtt_conf.client_id, &mqtt_conf.broker, mqtt_conf.port);
+        mqttoptions.set_keep_alive(Duration::from_secs(5));
+
+        let (mqtt_client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
+
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) = eventloop.poll().await {
+                    eprintln!("MQTT Eventloop Error: {:?}", e);
+                    sleep(Duration::from_secs(1)).await;
+                }
+            }
+        });
+        Some(mqtt_client)
+    } else {
+        None
+    };
+
+    // InfluxDB Client Setup
+    let influx_client_option = if let Some(influx_conf) = &config.influxdb {
+        if !quiet_mode {
+            println!("InfluxDB Configuration found: {}", influx_conf.url);
+        }
+        Some(InfluxClient::new(
+            &influx_conf.url,
+            &influx_conf.org,
+            &influx_conf.token,
+        ))
+    } else {
+        None
+    };
+
+    if mqtt_client_option.is_none() && influx_client_option.is_none() {
+        return Err("No valid MQTT or InfluxDB configuration found. Please check your config.toml.".into());
+    }
+
+    if !quiet_mode {
+        println!("--- Startup Configuration ---");
+        println!("Using configuration from: {}", used_path);
+        println!("Inverter URL: {}", config.inverter_url);
+        println!("Poll Interval: {}s", config.poll_interval_secs);
+        println!("-----------------------------");
+    }
 
     let mut error_count = 0;
 
     loop {
-        match client.get(&config.inverter_url).send().await {
+        match http_client.get(&config.inverter_url).send().await {
             Ok(resp) => {
                 match resp.text().await {
                     Ok(xml_str) => {
                         match from_str::<Root>(&xml_str) {
                             Ok(root) => {
-                                // Reset error counter on success
                                 error_count = 0;
+                                let device_serial = &root.device.serial;
 
                                 if !quiet_mode {
                                     println!("Device: {:?}", root.device.name);
                                 }
 
-                                // Publish each measurement to MQTT
-                                for measurement in &root.device.measurements.measurement {
-                                    if let Some(value) = &measurement.value {
-                                        let topic = format!("inverter/{}/{}", root.device.serial, measurement.typ);
-                                        let payload = if let Some(unit) = &measurement.unit {
-                                            format!("{} {}", value, unit)
-                                        } else {
-                                            value.clone()
-                                        };
+                                let mut influx_points: Vec<DataPoint> = Vec::new();
 
-                                        if let Err(e) = mqtt_client
-                                            .publish(&topic, QoS::AtLeastOnce, false, payload.as_bytes())
-                                            .await {
-                                            eprintln!("MQTT Publish Error: {:?}", e);
-                                        } else {
-                                            if !quiet_mode {
-                                                println!("Published: {} = {}", topic, payload);
+                                for measurement in &root.device.measurements.measurement {
+                                    if let Some(value_str) = &measurement.value {
+                                        let measurement_name = &measurement.typ;
+                                        let unit_str = measurement.unit.as_deref().unwrap_or("");
+
+                                        // 1. MQTT Publish
+                                        if let Some(mqtt_client) = &mqtt_client_option {
+                                            let topic = format!("inverter/{}/{}", device_serial, measurement_name);
+                                            let payload = format!("{} {}", value_str, unit_str).trim().to_string();
+
+                                            if let Err(e) = mqtt_client
+                                                .publish(&topic, QoS::AtLeastOnce, false, payload.as_bytes())
+                                                .await {
+                                                eprintln!("MQTT Publish Error: {:?}", e);
+                                            } else {
+                                                if !quiet_mode {
+                                                    println!("MQTT Published: {} = {}", topic, payload);
+                                                }
+                                            }
+                                        }
+
+                                        // 2. InfluxDB Point Preparation
+                                        if let Some(_influx_client) = &influx_client_option {
+                                            if let Some(value) = parse_value(value_str) {
+                                                let mut builder = DataPoint::builder("inverter_data")
+                                                    .tag("serial", device_serial.as_str())
+                                                    .tag("type", measurement_name.as_str())
+                                                    .field("value", value);
+
+                                                if let Some(unit) = &measurement.unit {
+                                                    builder = builder.tag("unit", unit.as_str());
+                                                }
+
+                                                if let Ok(point) = builder.build() {
+                                                    influx_points.push(point);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 3. InfluxDB Write Batch
+                                // We access the bucket from the struct now: config.influxdb.as_ref().unwrap().bucket
+                                if let Some(influx_client) = &influx_client_option {
+                                    if !influx_points.is_empty() {
+                                        // Safe to unwrap here because we know influx_client_option is Some
+                                        let bucket = &config.influxdb.as_ref().unwrap().bucket;
+
+                                        let points_stream = stream::iter(influx_points);
+
+                                        match influx_client.write(bucket, points_stream).await {
+                                            Ok(_) => {
+                                                if !quiet_mode {
+                                                    println!("InfluxDB Write Success");
+                                                }
+                                            },
+                                            Err(e) => {
+                                                error_count += 1;
+                                                eprintln!("InfluxDB Write Error: {:?}", e);
                                             }
                                         }
                                     }
@@ -183,29 +247,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Err(e) => {
                                 error_count += 1;
-                                eprintln!("XML Parse Error ({}/{}): {:?}", error_count, config.max_errors, e);
-                                if error_count >= config.max_errors {
-                                    return Err(format!("Too many XML parse errors: {}", e).into());
-                                }
+                                eprintln!("XML Parse Error: {:?}", e);
                             }
                         }
                     }
-                    Err(e) => {
-                        error_count += 1;
-                        eprintln!("Response Text Error ({}/{}): {:?}", error_count, config.max_errors, e);
-                        if error_count >= config.max_errors {
-                            return Err(format!("Too many response text errors: {}", e).into());
-                        }
-                    }
+                    Err(e) => eprintln!("Response Text Error: {:?}", e),
                 }
             }
             Err(e) => {
                 error_count += 1;
-                eprintln!("Request Error ({}/{}): {:?}", error_count, config.max_errors, e);
-                if error_count >= config.max_errors {
-                    return Err(format!("Too many request errors: {}", e).into());
-                }
+                eprintln!("Request Error: {:?}", e);
             }
+        }
+
+        if error_count >= config.max_errors {
+            return Err(format!("Too many errors ({}), stopping.", error_count).into());
         }
 
         sleep(Duration::from_secs(config.poll_interval_secs)).await;

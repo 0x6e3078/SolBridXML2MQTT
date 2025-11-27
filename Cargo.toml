@@ -4,12 +4,23 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde-xml-rs = "0.8.2"
-reqwest = "0.12.24"
-tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "macros"] }
-rumqttc = "0.24"
+# HTTP Client
+reqwest = { version = "0.12.24", features = ["json"] }
+
+# Async Runtime
+tokio = { version = "1", features = ["full"] }
+
+# Configuration and Serialization
 toml = "0.9.8"
+serde = { version = "1", features = ["derive"] }
+serde-xml-rs = "0.8.2"
+
+# MQTT Client (Re-added for dual-mode functionality)
+rumqttc = "0.25.1"
+
+# InfluxDB Client (The missing dependency)
+influxdb2 = "0.5"
+futures = "0.3.31"
 
 [profile.release]
 lto = true
