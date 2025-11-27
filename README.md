@@ -10,12 +10,14 @@ A Rust application that fetches XML measurement data from a Kontron Solbrid inve
 - ⚙️ Configuration via TOML file
 - 🔌 Support for multiple measurement types (AC voltage, current, power, frequency, battery data, etc.)
 - 📊 Individual MQTT topics per measurement type
+- 💾 Store Values into InfluxDB
 
 ## Requirements
 
 - Rust 1.70 or higher
 - MQTT broker (e.g., Mosquitto, HiveMQ)
-- Solar inverter or device with XML measurements endpoint
+- Influx DB
+- Kontron Solbrid inverter 2 or 4 MPPT
 
 ## Installation
 
@@ -40,23 +42,38 @@ Create a `config.toml` file in the same directory as the executable:
 
 ```toml
 inverter_url = "http://<inter.ip>/measurements.xml"
-mqtt_broker = "<mqtt.broker.ip>"
-mqtt_port = 1883
-mqtt_client_id = "inverter_client"
 poll_interval_secs = 1
 max_errors = 40
+
+[mqtt]
+broker = "<mqtt.broker.ip>"
+port = 1883
+client_id = "inverter_client"
+
+[influxdb]
+url = "http://<influx.ip>:8086"
+token = "MyToken"
+org = "MyOrganisation"
+bucket = "MyBucket"
 ```
 
 ### Configuration Parameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `inverter_url` | URL to the XML measurements endpoint | Required |
-| `mqtt_broker` | MQTT broker hostname or IP address | Required |
-| `mqtt_port` | MQTT broker port | Required |
-| `mqtt_client_id` | Unique client ID for MQTT connection | Required |
-| `poll_interval_secs` | Interval between polls in seconds | Required |
-| `max_errors` | Maximum consecutive errors before exit | Required |
+| Parameter            | Description                            | Default  |
+|----------------------|----------------------------------------|----------|
+| `inverter_url`       | URL to the XML measurements endpoint   | Required |
+| `poll_interval_secs` | Interval between polls in seconds      | Required |
+| `max_errors`         | Maximum consecutive errors before exit | Required |
+| `quiet_mode`         | enables or disable debug output        | Required |
+| `[mqtt]`             |                                        | Optional |
+| `broker`             | MQTT broker hostname or IP address     | Required |
+| `port`               | MQTT broker port                       | Required |
+| `client_id`          | Unique client ID for MQTT connection   | Required |
+| `[influxdb]`         |                                        | Optional |
+| `url`                | influx db url                          | Required |
+| `token`              | access token                           | Required |
+| `org`                | organisation id                        | Required |
+| `bucket`             | bucket location                        | Required |
 
 ## Usage
 
@@ -155,7 +172,7 @@ The application expects XML in the following format:
 ```xml
 <?xml version='1.0' encoding='UTF-8'?>
 <root>
-  <Device Name='SolBrid 10-3-4' Type='Inverter' Serial='7799ABCDEXXXXXX000' ...>
+  <Device Name='SolBrid 10-3-4' Type='Inverter' Serial='779900KA009xxxxxx' ...>
     <Measurements>
       <Measurement Value='237.3' Unit='V' Type='AC_Voltage1'/>
       <Measurement Value='382.6' Unit='W' Type='AC_Power'/>
@@ -239,4 +256,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 Your Name - [@0x6e3078](https://github.com/0x6e3078)
 
-Project Link: [https://github.com/0x6e3078/SolBridXML2MQTT](https://github.com/yourusername/SolBridXML2MQTT)
+Project Link: [https://github.com/0x6e3078/SolBridXML2MQTT](https://github.com/0x6e3078/SolBridXML2MQTT)
