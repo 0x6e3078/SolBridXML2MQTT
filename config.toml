@@ -1,0 +1,6 @@
+inverter_url = "http://<inverter.ip>/measurements.xml"
+mqtt_broker = "<mqtt.brocker.ip>"
+mqtt_port = 1883
+mqtt_client_id = "inverter_client"
+poll_interval_secs = 1
+max_errors = 40
