@@ -6,8 +6,8 @@ echo "Building solbridxml2mqtt..."
 cargo build --release
 
 echo "Installing binary to /usr/local/bin..."
-sudo cp target/release/solbridxml2mqtt /usr/local/bin/
-sudo chmod +x /usr/local/bin/solbridxml2mqtt
+sudo cp target/release/SolBridXML2MQTT /usr/local/bin/
+sudo chmod +x /usr/local/bin/SolBridXML2MQTT
 
 echo "Creating configuration directory..."
 sudo mkdir -p /etc/solbridxml2mqtt
