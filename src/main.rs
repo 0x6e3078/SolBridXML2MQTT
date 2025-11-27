@@ -23,6 +23,9 @@ use rumqttc::{MqttOptions, AsyncClient, QoS};
 use std::fs;
 use std::env;
 
+// Define a constant for the HTTP connection timeout
+const HTTP_TIMEOUT_SECS: u64 = 5;
+
 #[derive(Debug, Deserialize)]
 struct Config {
     inverter_url: String,
@@ -31,6 +34,8 @@ struct Config {
     mqtt_client_id: String,
     poll_interval_secs: u64,
     max_errors: u32,
+    // New field for quiet mode configuration
+    quiet_mode: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,21 +98,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_str = config_str
         .ok_or("Could not find config.toml in any of these locations: config.toml, /etc/solbridxml2mqtt/config.toml")?;
 
-    println!("Using configuration from: {}", used_path);
-
     let config: Config = toml::from_str(&config_str)
         .map_err(|e| format!("Failed to parse config.toml: {}", e))?;
-    // Print current working directory for debugging
-    let current_dir = env::current_dir()?;
-    println!("Current working directory: {:?}", current_dir);
 
-    println!("Configuration loaded:");
-    println!("  Inverter URL: {}", config.inverter_url);
-    println!("  MQTT Broker: {}:{}", config.mqtt_broker, config.mqtt_port);
-    println!("  Poll Interval: {}s", config.poll_interval_secs);
-    println!("  Max Errors: {}", config.max_errors);
+    // Determine if quiet mode is enabled
+    let quiet_mode = config.quiet_mode.unwrap_or(false);
 
-    let client = Client::new();
+    if !quiet_mode {
+        println!("Using configuration from: {}", used_path);
+        // Print current working directory for debugging
+        let current_dir = env::current_dir()?;
+        println!("Current working directory: {:?}", current_dir);
+
+        println!("Configuration loaded:");
+        println!("  Inverter URL: {}", config.inverter_url);
+        println!("  MQTT Broker: {}:{}", config.mqtt_broker, config.mqtt_port);
+        println!("  Poll Interval: {}s", config.poll_interval_secs);
+        println!("  Max Errors: {}", config.max_errors);
+        println!("  HTTP Timeout: {}s", HTTP_TIMEOUT_SECS);
+    }
+
+    // Setup reqwest Client with a 5s connect and read timeout
+    let client = Client::builder()
+        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .build()?;
 
     // Setup MQTT connection with config values
     let mut mqttoptions = MqttOptions::new(
@@ -141,7 +155,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Reset error counter on success
                                 error_count = 0;
 
-                                println!("Device: {:?}", root.device.name);
+                                if !quiet_mode {
+                                    println!("Device: {:?}", root.device.name);
+                                }
 
                                 // Publish each measurement to MQTT
                                 for measurement in &root.device.measurements.measurement {
@@ -158,7 +174,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             .await {
                                             eprintln!("MQTT Publish Error: {:?}", e);
                                         } else {
-                                            println!("Published: {} = {}", topic, payload);
+                                            if !quiet_mode {
+                                                println!("Published: {} = {}", topic, payload);
+                                            }
                                         }
                                     }
                                 }
