@@ -49,6 +49,7 @@ max_errors = 40
 broker = "<mqtt.broker.ip>"
 port = 1883
 client_id = "inverter_client"
+use_json = true
 
 [influxdb]
 url = "http://<influx.ip>:8086"
@@ -59,21 +60,22 @@ bucket = "MyBucket"
 
 ### Configuration Parameters
 
-| Parameter            | Description                            | Default  |
-|----------------------|----------------------------------------|----------|
-| `inverter_url`       | URL to the XML measurements endpoint   | Required |
-| `poll_interval_secs` | Interval between polls in seconds      | Required |
-| `max_errors`         | Maximum consecutive errors before exit | Required |
-| `quiet_mode`         | enables or disable debug output        | Required |
-| `[mqtt]`             |                                        | Optional |
-| `broker`             | MQTT broker hostname or IP address     | Required |
-| `port`               | MQTT broker port                       | Required |
-| `client_id`          | Unique client ID for MQTT connection   | Required |
-| `[influxdb]`         |                                        | Optional |
-| `url`                | influx db url                          | Required |
-| `token`              | access token                           | Required |
-| `org`                | organisation id                        | Required |
-| `bucket`             | bucket location                        | Required |
+| Parameter            | Description                                              | Default  |
+|----------------------|----------------------------------------------------------|----------|
+| `inverter_url`       | URL to the XML measurements endpoint                     | Required |
+| `poll_interval_secs` | Interval between polls in seconds                        | Required |
+| `max_errors`         | Maximum consecutive errors before exit                   | Required |
+| `quiet_mode`         | enables or disable debug output                          | Required |
+| `[mqtt]`             |                                                          | Optional |
+| `broker`             | MQTT broker hostname or IP address                       | Required |
+| `port`               | MQTT broker port                                         | Required |
+| `client_id`          | Unique client ID for MQTT connection                     | Required |
+| `use_json`           | Use JSON formated content for Home Assistant integration | Required |
+| `[influxdb]`         |                                                          | Optional |
+| `url`                | influx db url                                            | Required |
+| `token`              | access token                                             | Required |
+| `org`                | organisation id                                          | Required |
+| `bucket`             | bucket location                                          | Required |
 
 ## Usage
 
